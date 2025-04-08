@@ -1,0 +1,68 @@
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import os
+import shutil
+from pathlib import Path
+import sys
+
+# Add the project root to the path so we can import from other modules
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
+from src.nlp.summarizer import generate_summary
+from src.nlp.entity_extractor import extract_entities
+from src.utils.pdf_extractor import extract_text_from_pdf
+
+app = FastAPI(title="UniSphere Lite API", description="API for procurement document processing")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # For development; restrict in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Ensure upload directory exists
+UPLOAD_DIR = Path("data/uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+@app.get("/")
+async def root():
+    return {"message": "Welcome to UniSphere Lite API"}
+
+@app.post("/upload-tender")
+async def upload_tender(file: UploadFile = File(...)):
+    """
+    Upload a tender PDF, extract text, generate summary, and extract entities
+    """
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    
+    # Save the uploaded file
+    file_path = UPLOAD_DIR / file.filename
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    try:
+        # Extract text from PDF
+        text = extract_text_from_pdf(file_path)
+        
+        # Generate summary
+        summary = generate_summary(text)
+        
+        # Extract entities
+        entities = extract_entities(text)
+        
+        return {
+            "filename": file.filename,
+            "text_length": len(text),
+            "summary": summary,
+            "entities": entities
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
